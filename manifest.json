@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "io.weirdware.BlueFerry.Quattro",
+  "name": "BlueFerry",
+  "version": "0.6.0",
+  "author": "BlueFerry contributors",
+  "description": "BlueFerry connection status and Quickshell client launcher",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "Panel.qml"},
+  "barWidget": {
+    "displayName": "BlueFerry",
+    "description": "Shows iPhone connection health and recent messages, and opens the full client",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
