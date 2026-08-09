@@ -67,6 +67,12 @@ Panel {
     return (message.outgoing ? "You: " : "") + String(message.body || "")
   }
 
+  function previewTimestamp(thread) {
+    if (!thread || !thread.messages || thread.messages.length === 0) return ""
+    var message = thread.messages[thread.messages.length - 1]
+    return String(message.display_timestamp || "")
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -342,6 +348,15 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: root.preview(row.thread)
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+        Text {
+          Layout.fillWidth: true
+          visible: text !== ""
+          text: root.previewTimestamp(row.thread)
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
