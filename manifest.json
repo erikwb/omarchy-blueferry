@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "io.weirdware.BlueFerry.Quattro",
+  "id": "io.weirdware.blueferry",
   "name": "BlueFerry",
   "version": "0.6.0",
   "author": "BlueFerry contributors",
+  "license": "GPL-2.0-only",
   "description": "BlueFerry connection status and Quickshell client launcher",
   "kinds": ["bar-widget"],
   "entryPoints": {"barWidget": "Panel.qml"},

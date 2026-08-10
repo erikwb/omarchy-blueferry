@@ -9,8 +9,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "io.weirdware.BlueFerry.Quattro"
-  ipcTarget: "io.weirdware.BlueFerry.Quattro"
+  moduleName: "io.weirdware.blueferry"
+  ipcTarget: "io.weirdware.blueferry"
   manageIpc: false
 
   property bool componentsInstalled: false

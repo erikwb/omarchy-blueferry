@@ -8,16 +8,22 @@ software running on your phone, no proxies, and no cloud tricks.
 This widget shows connection health and recent conversations in the bar popup, 
 and opens the full client for messages, pairing, and preferences.
 
-![BlueFerry for Omarchy Quattro](screenshot.png)
+![BlueFerry for Omarchy Quattro](preview.png)
 
 Install it through Omarchy:
 
 ```bash
-omarchy plugin add https://github.com/erikwb/omarchy-iphone.git
+omarchy plugin add https://github.com/erikwb/omarchy-blueferry.git
 ```
 
 Omarchy adds third-party plugins disabled. Review it, then enable BlueFerry
 from **Setup › Plugins** and place it on the bar.
+
+Remove it with:
+
+```bash
+omarchy plugin remove io.weirdware.blueferry
+```
 
 The widget expects `blueferry-backend` and `blueferry-quickshell`. If they are
 missing, clicking it opens a terminal with the source-build commands; it does
