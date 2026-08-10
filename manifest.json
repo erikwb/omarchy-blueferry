@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.weirdware.blueferry",
   "name": "BlueFerry",
-  "version": "0.6.0",
-  "author": "BlueFerry contributors",
+  "version": "0.6.1",
+  "author": "Erik Bourget",
   "license": "GPL-2.0-only",
-  "description": "BlueFerry connection status and Quickshell client launcher",
+  "description": "Send and receive iMessage and SMS through your iPhone",
   "kinds": ["bar-widget"],
   "entryPoints": {"barWidget": "Panel.qml"},
   "barWidget": {
