@@ -5,6 +5,8 @@ This is the native Omarchy panel for
 and recent conversations in the bar popup, and opens the full client for
 messages, pairing, and preferences.
 
+![BlueFerry for Omarchy Quattro](screenshot.png)
+
 Install it through Omarchy:
 
 ```bash
