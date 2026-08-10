@@ -1,9 +1,12 @@
 # BlueFerry for Omarchy Quattro
 
 This is the native Omarchy panel for
-[BlueFerry](https://github.com/erikwb/blueferry). It shows connection health
-and recent conversations in the bar popup, and opens the full client for
-messages, pairing, and preferences.
+[BlueFerry](https://github.com/erikwb/blueferry). It allows you to send and
+receive iMessages over Bluetooth while paired to your iPhone with no special
+software running on your phone, no proxies, and no cloud tricks. 
+
+This widget shows connection health and recent conversations in the bar popup, 
+and opens the full client for messages, pairing, and preferences.
 
 ![BlueFerry for Omarchy Quattro](screenshot.png)
 
