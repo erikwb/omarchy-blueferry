@@ -18,9 +18,12 @@ Panel {
   property bool connected: false
   property var backendStatus: ({})
   property var threads: []
-  property string errorText: ""
+  property string statusMessage: ""
+  property bool statusMessageIsError: false
   property bool cursorActive: false
   property int rowIndex: 0
+  property int statusRequestId: 0
+  property int threadsRequestId: 0
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -28,15 +31,26 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string summary: !componentsInstalled ? "Not installed"
     : !configured ? "Setup required"
+    : backendStatus.initializing === true ? "Starting"
     : connected ? "Connected" : "Reconnecting"
   readonly property var recentThreads: threads.slice(0, 5)
+
+  function requestStatus() {
+    if (!componentsInstalled || statusRequestId !== 0) return
+    statusRequestId = backendBridge.request("status", {})
+  }
+
+  function requestThreads() {
+    if (!componentsInstalled || threadsRequestId !== 0) return
+    threadsRequestId = backendBridge.request("threads", {limit: 5})
+  }
 
   function refresh() {
     if (!installationProcess.running) installationProcess.running = true
     if (!componentsInstalled) return
     if (!configurationProcess.running) configurationProcess.running = true
-    if (!statusProcess.running) statusProcess.running = true
-    if (!threadsProcess.running) threadsProcess.running = true
+    requestStatus()
+    requestThreads()
   }
 
   function openClient() {
@@ -86,10 +100,14 @@ Panel {
   Process {
     id: installationProcess
     command: ["/usr/bin/sh", "-c",
-      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && printf ready"]
+      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && test -x /usr/bin/blueferry-quickshell-bridge && printf ready"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.componentsInstalled = String(text).trim() === "ready"
+      onStreamFinished: {
+        var wasInstalled = root.componentsInstalled
+        root.componentsInstalled = String(text).trim() === "ready"
+        if (root.componentsInstalled && !wasInstalled) Qt.callLater(root.refresh)
+      }
     }
   }
 
@@ -106,38 +124,66 @@ Panel {
     }
   }
 
-  Process {
-    id: statusProcess
-    command: ["/usr/bin/blueferry", "status-json"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          root.backendStatus = JSON.parse(text)
-          root.connected = root.backendStatus.daemon === true && root.backendStatus.map === true
-          root.errorText = ""
-        } catch (error) {
-          root.connected = false
-          root.errorText = "BlueFerry returned invalid status data"
-        }
-      }
-    }
-    // Quickshell's qmltypes omit the QProcess namespace used by this signal.
-    // qmllint disable signal-handler-parameters
-    onExited: function(code) {
-      if (code !== 0 && root.configured) root.connected = false
-    }
+  BackendBridge {
+    id: backendBridge
+    active: root.componentsInstalled
   }
 
-  Process {
-    id: threadsProcess
-    command: ["/usr/bin/blueferry", "threads-json", "--limit", "5"]
-    stdout: StdioCollector {
-      onStreamFinished: {
+  Connections {
+    target: backendBridge
+
+    function onResponse(method, requestId, resultJson) {
+      if (method === "status" && requestId === root.statusRequestId) {
+        root.statusRequestId = 0
+        var parsedStatus
         try {
-          var value = JSON.parse(text)
-          root.threads = Array.isArray(value) ? value : []
+          parsedStatus = JSON.parse(resultJson)
+        } catch (error) {
+          root.connected = false
+          root.statusMessage = "BlueFerry status is temporarily unavailable"
+          root.statusMessageIsError = true
+          return
+        }
+        if (typeof parsedStatus !== "object" || parsedStatus === null
+            || Array.isArray(parsedStatus)) {
+          root.connected = false
+          root.statusMessage = "BlueFerry status is temporarily unavailable"
+          root.statusMessageIsError = true
+          return
+        }
+        root.backendStatus = parsedStatus
+        root.connected = parsedStatus.daemon === true && parsedStatus.map === true
+        root.statusMessage = String(parsedStatus.connectivity_detail || "")
+        root.statusMessageIsError = false
+      } else if (method === "threads" && requestId === root.threadsRequestId) {
+        root.threadsRequestId = 0
+        try {
+          var parsedThreads = JSON.parse(resultJson)
+          root.threads = Array.isArray(parsedThreads) ? parsedThreads : []
         } catch (error) { root.threads = [] }
       }
+    }
+
+    function onFailure(method, requestId, message) {
+      if (method === "status" || method === "") {
+        if (method === "" || requestId === root.statusRequestId)
+          root.statusRequestId = 0
+        root.connected = false
+        if (root.configured) {
+          root.statusMessage = message || "Unable to contact BlueFerry"
+          root.statusMessageIsError = true
+        }
+      }
+      if (method === "threads" || method === "") {
+        if (method === "" || requestId === root.threadsRequestId)
+          root.threadsRequestId = 0
+        root.threads = []
+      }
+    }
+
+    function onEventReceived(name, _data) {
+      if (name === "status-changed") root.requestStatus()
+      else if (name === "history-changed") root.requestThreads()
     }
   }
 
@@ -223,10 +269,10 @@ Panel {
           }
 
           Text {
-            visible: root.errorText !== ""
+            visible: root.statusMessage !== ""
             width: parent.width
-            text: root.errorText
-            color: root.urgent
+            text: root.statusMessage
+            color: root.statusMessageIsError ? root.urgent : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
