@@ -25,9 +25,9 @@ Remove it with:
 omarchy plugin remove io.weirdware.blueferry
 ```
 
-The widget expects `blueferry-backend` and `blueferry-quickshell`. If they are
-missing, clicking it opens a terminal with the source-build commands; it does
-not run them for you. Once they are installed, the same click opens BlueFerry
-and its normal pairing flow.
+The widget expects `blueferry-backend` and `blueferry-quickshell` 0.7.4 or
+newer. If they are missing, clicking it opens a terminal with the source-build
+commands; it does not run them for you. Once they are installed, the same click
+opens BlueFerry and its normal pairing flow.
 
 Licensed under [GPL version 2 only](LICENSE).

@@ -21,6 +21,8 @@ Panel {
   property string errorText: ""
   property bool cursorActive: false
   property int rowIndex: 0
+  property int statusRequestId: 0
+  property int threadsRequestId: 0
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -31,12 +33,22 @@ Panel {
     : connected ? "Connected" : "Reconnecting"
   readonly property var recentThreads: threads.slice(0, 5)
 
+  function requestStatus() {
+    if (!componentsInstalled || statusRequestId !== 0) return
+    statusRequestId = backendBridge.request("status", {})
+  }
+
+  function requestThreads() {
+    if (!componentsInstalled || threadsRequestId !== 0) return
+    threadsRequestId = backendBridge.request("threads", {limit: 5})
+  }
+
   function refresh() {
     if (!installationProcess.running) installationProcess.running = true
     if (!componentsInstalled) return
     if (!configurationProcess.running) configurationProcess.running = true
-    if (!statusProcess.running) statusProcess.running = true
-    if (!threadsProcess.running) threadsProcess.running = true
+    requestStatus()
+    requestThreads()
   }
 
   function openClient() {
@@ -86,10 +98,14 @@ Panel {
   Process {
     id: installationProcess
     command: ["/usr/bin/sh", "-c",
-      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && printf ready"]
+      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && test -x /usr/bin/blueferry-quickshell-bridge && printf ready"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.componentsInstalled = String(text).trim() === "ready"
+      onStreamFinished: {
+        var wasInstalled = root.componentsInstalled
+        root.componentsInstalled = String(text).trim() === "ready"
+        if (root.componentsInstalled && !wasInstalled) Qt.callLater(root.refresh)
+      }
     }
   }
 
@@ -106,38 +122,48 @@ Panel {
     }
   }
 
-  Process {
-    id: statusProcess
-    command: ["/usr/bin/blueferry", "status-json"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          root.backendStatus = JSON.parse(text)
-          root.connected = root.backendStatus.daemon === true && root.backendStatus.map === true
-          root.errorText = ""
-        } catch (error) {
-          root.connected = false
-          root.errorText = "BlueFerry returned invalid status data"
-        }
-      }
-    }
-    // Quickshell's qmltypes omit the QProcess namespace used by this signal.
-    // qmllint disable signal-handler-parameters
-    onExited: function(code) {
-      if (code !== 0 && root.configured) root.connected = false
-    }
+  BackendBridge {
+    id: backendBridge
+    active: root.componentsInstalled
   }
 
-  Process {
-    id: threadsProcess
-    command: ["/usr/bin/blueferry", "threads-json", "--limit", "5"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var value = JSON.parse(text)
-          root.threads = Array.isArray(value) ? value : []
-        } catch (error) { root.threads = [] }
+  Connections {
+    target: backendBridge
+
+    function onResponse(method, requestId, result) {
+      if (method === "status" && requestId === root.statusRequestId) {
+        root.statusRequestId = 0
+        if (typeof result !== "object" || result === null) {
+          root.connected = false
+          root.errorText = "BlueFerry returned invalid status data"
+          return
+        }
+        root.backendStatus = result
+        root.connected = result.daemon === true && result.map === true
+        root.errorText = ""
+      } else if (method === "threads" && requestId === root.threadsRequestId) {
+        root.threadsRequestId = 0
+        root.threads = Array.isArray(result) ? result : []
       }
+    }
+
+    function onFailure(method, requestId, message) {
+      if (method === "status" || method === "") {
+        if (method === "" || requestId === root.statusRequestId)
+          root.statusRequestId = 0
+        root.connected = false
+        if (root.configured) root.errorText = message
+      }
+      if (method === "threads" || method === "") {
+        if (method === "" || requestId === root.threadsRequestId)
+          root.threadsRequestId = 0
+        root.threads = []
+      }
+    }
+
+    function onEventReceived(name, _data) {
+      if (name === "status-changed") root.requestStatus()
+      else if (name === "history-changed") root.requestThreads()
     }
   }
 
