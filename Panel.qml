@@ -18,7 +18,8 @@ Panel {
   property bool connected: false
   property var backendStatus: ({})
   property var threads: []
-  property string errorText: ""
+  property string statusMessage: ""
+  property bool statusMessageIsError: false
   property bool cursorActive: false
   property int rowIndex: 0
   property int statusRequestId: 0
@@ -30,6 +31,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string summary: !componentsInstalled ? "Not installed"
     : !configured ? "Setup required"
+    : backendStatus.initializing === true ? "Starting"
     : connected ? "Connected" : "Reconnecting"
   readonly property var recentThreads: threads.slice(0, 5)
 
@@ -130,20 +132,35 @@ Panel {
   Connections {
     target: backendBridge
 
-    function onResponse(method, requestId, result) {
+    function onResponse(method, requestId, resultJson) {
       if (method === "status" && requestId === root.statusRequestId) {
         root.statusRequestId = 0
-        if (typeof result !== "object" || result === null) {
+        var parsedStatus
+        try {
+          parsedStatus = JSON.parse(resultJson)
+        } catch (error) {
           root.connected = false
-          root.errorText = "BlueFerry returned invalid status data"
+          root.statusMessage = "BlueFerry status is temporarily unavailable"
+          root.statusMessageIsError = true
           return
         }
-        root.backendStatus = result
-        root.connected = result.daemon === true && result.map === true
-        root.errorText = ""
+        if (typeof parsedStatus !== "object" || parsedStatus === null
+            || Array.isArray(parsedStatus)) {
+          root.connected = false
+          root.statusMessage = "BlueFerry status is temporarily unavailable"
+          root.statusMessageIsError = true
+          return
+        }
+        root.backendStatus = parsedStatus
+        root.connected = parsedStatus.daemon === true && parsedStatus.map === true
+        root.statusMessage = String(parsedStatus.connectivity_detail || "")
+        root.statusMessageIsError = false
       } else if (method === "threads" && requestId === root.threadsRequestId) {
         root.threadsRequestId = 0
-        root.threads = Array.isArray(result) ? result : []
+        try {
+          var parsedThreads = JSON.parse(resultJson)
+          root.threads = Array.isArray(parsedThreads) ? parsedThreads : []
+        } catch (error) { root.threads = [] }
       }
     }
 
@@ -152,7 +169,10 @@ Panel {
         if (method === "" || requestId === root.statusRequestId)
           root.statusRequestId = 0
         root.connected = false
-        if (root.configured) root.errorText = message
+        if (root.configured) {
+          root.statusMessage = message || "Unable to contact BlueFerry"
+          root.statusMessageIsError = true
+        }
       }
       if (method === "threads" || method === "") {
         if (method === "" || requestId === root.threadsRequestId)
@@ -249,10 +269,10 @@ Panel {
           }
 
           Text {
-            visible: root.errorText !== ""
+            visible: root.statusMessage !== ""
             width: parent.width
-            text: root.errorText
-            color: root.urgent
+            text: root.statusMessage
+            color: root.statusMessageIsError ? root.urgent : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
