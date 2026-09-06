@@ -94,6 +94,10 @@ Panel {
     return false
   }
 
+  function threadIsStarred(thread) {
+    return !!(thread && thread.starred === true)
+  }
+
   function preview(thread) {
     if (!thread || !thread.messages || thread.messages.length === 0) return "No messages"
     var message = thread.messages[thread.messages.length - 1]
@@ -416,6 +420,15 @@ Panel {
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
+      }
+
+      Text {
+        visible: root.threadIsStarred(row.thread)
+        text: "★"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        Accessible.name: "Starred"
       }
     }
   }
