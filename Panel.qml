@@ -21,6 +21,8 @@ Panel {
   property string errorText: ""
   property bool cursorActive: false
   property int rowIndex: 0
+  property int statusRequestId: 0
+  property int threadsRequestId: 0
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -29,22 +31,42 @@ Panel {
   readonly property string summary: !componentsInstalled ? "Not installed"
     : !configured ? "Setup required"
     : connected ? "Connected" : "Reconnecting"
-  readonly property var recentThreads: threads.slice(0, 5)
+  readonly property var recentThreads: {
+    var unread = []
+    for (var index = 0; index < threads.length; ++index) {
+      if (threadIsUnread(threads[index])) unread.push(threads[index])
+      if (unread.length >= 5) break
+    }
+    return unread
+  }
+
+  function requestStatus() {
+    if (!componentsInstalled || statusRequestId !== 0) return
+    statusRequestId = backendBridge.request("status", {})
+  }
+
+  function requestThreads() {
+    if (!componentsInstalled || threadsRequestId !== 0) return
+    threadsRequestId = backendBridge.request("threads", {limit: 50})
+  }
 
   function refresh() {
     if (!installationProcess.running) installationProcess.running = true
     if (!componentsInstalled) return
     if (!configurationProcess.running) configurationProcess.running = true
-    if (!statusProcess.running) statusProcess.running = true
-    if (!threadsProcess.running) threadsProcess.running = true
+    requestStatus()
+    requestThreads()
   }
 
-  function openClient() {
+  function openClient(thread) {
     if (!componentsInstalled) {
       showInstallInstructions()
       return
     }
-    Quickshell.execDetached(["/usr/bin/blueferry-quickshell"])
+    var args = ["/usr/bin/blueferry-quickshell"]
+    if (thread && thread.key)
+      args = args.concat(["--thread", String(thread.key)])
+    Quickshell.execDetached(args)
     root.close()
   }
 
@@ -59,6 +81,17 @@ Panel {
       + "'After installation, open this panel again to pair the iPhone.' ''; "
       + "exec \"${SHELL:-/bin/bash}\""
     Quickshell.execDetached(["xdg-terminal-exec", "bash", "-lc", command])
+  }
+
+  function threadIsUnread(thread) {
+    if (!thread) return false
+    if (thread.unread === true) return true
+    if (thread.unread === false) return false
+    var messages = thread.messages || []
+    for (var index = 0; index < messages.length; ++index) {
+      if (!messages[index].outgoing && messages[index].read === false) return true
+    }
+    return false
   }
 
   function preview(thread) {
@@ -86,10 +119,14 @@ Panel {
   Process {
     id: installationProcess
     command: ["/usr/bin/sh", "-c",
-      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && printf ready"]
+      "test -x /usr/bin/blueferry && test -x /usr/bin/blueferry-quickshell && test -x /usr/bin/blueferry-quickshell-bridge && printf ready"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.componentsInstalled = String(text).trim() === "ready"
+      onStreamFinished: {
+        var wasInstalled = root.componentsInstalled
+        root.componentsInstalled = String(text).trim() === "ready"
+        if (root.componentsInstalled && !wasInstalled) Qt.callLater(root.refresh)
+      }
     }
   }
 
@@ -106,38 +143,49 @@ Panel {
     }
   }
 
-  Process {
-    id: statusProcess
-    command: ["/usr/bin/blueferry", "status-json"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          root.backendStatus = JSON.parse(text)
-          root.connected = root.backendStatus.daemon === true && root.backendStatus.map === true
-          root.errorText = ""
-        } catch (error) {
-          root.connected = false
-          root.errorText = "BlueFerry returned invalid status data"
-        }
-      }
-    }
-    // Quickshell's qmltypes omit the QProcess namespace used by this signal.
-    // qmllint disable signal-handler-parameters
-    onExited: function(code) {
-      if (code !== 0 && root.configured) root.connected = false
-    }
+  BackendBridge {
+    id: backendBridge
+    active: root.componentsInstalled
   }
 
-  Process {
-    id: threadsProcess
-    command: ["/usr/bin/blueferry", "threads-json", "--limit", "5"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var value = JSON.parse(text)
-          root.threads = Array.isArray(value) ? value : []
-        } catch (error) { root.threads = [] }
+  Connections {
+    target: backendBridge
+
+    function onResponse(method, requestId, result) {
+      if (method === "status" && requestId === root.statusRequestId) {
+        root.statusRequestId = 0
+        if (typeof result !== "object" || result === null) {
+          root.connected = false
+          root.errorText = "BlueFerry returned invalid status data"
+          return
+        }
+        root.backendStatus = result
+        root.connected = result.daemon === true && result.map === true
+        root.errorText = ""
+      } else if (method === "threads" && requestId === root.threadsRequestId) {
+        root.threadsRequestId = 0
+        root.threads = Array.isArray(result) ? result : []
+        root.rowIndex = Math.max(0, Math.min(root.rowIndex, root.recentThreads.length))
       }
+    }
+
+    function onFailure(method, requestId, message) {
+      if (method === "status" || method === "") {
+        if (method === "" || requestId === root.statusRequestId)
+          root.statusRequestId = 0
+        root.connected = false
+        if (root.configured) root.errorText = message
+      }
+      if (method === "threads" || method === "") {
+        if (method === "" || requestId === root.threadsRequestId)
+          root.threadsRequestId = 0
+        root.threads = []
+      }
+    }
+
+    function onEventReceived(name, _data) {
+      if (name === "status-changed") root.requestStatus()
+      else if (name === "history-changed") root.requestThreads()
     }
   }
 
@@ -188,7 +236,12 @@ Panel {
         root.cursorActive = true
         root.rowIndex = Math.max(0, Math.min(root.recentThreads.length, root.rowIndex + dy))
       }
-      onActivateRequested: root.openClient()
+      onActivateRequested: {
+        if (root.rowIndex < root.recentThreads.length)
+          root.openClient(root.recentThreads[root.rowIndex])
+        else
+          root.openClient()
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -252,7 +305,7 @@ Panel {
             spacing: Style.space(8)
 
             PanelSectionHeader {
-              text: "RECENT"
+              text: "UNREAD"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -315,7 +368,7 @@ Panel {
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onEntered: { root.cursorActive = true; root.rowIndex = row.cursorIndex }
-      onClicked: root.openClient()
+      onClicked: root.openClient(row.thread)
     }
 
     RowLayout {
@@ -343,6 +396,7 @@ Panel {
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
+          font.bold: true
           elide: Text.ElideRight
         }
         Text {
