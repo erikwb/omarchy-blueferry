@@ -12,7 +12,7 @@ Item {
   property bool ready: false
   property var queuedRequests: []
 
-  signal response(string method, int requestId, var result)
+  signal response(string method, int requestId, string resultJson)
   signal failure(string method, int requestId, string message)
   signal eventReceived(string name, var data)
 
@@ -37,7 +37,12 @@ Item {
       if (typeof payload.event === "string") {
         eventReceived(payload.event, payload.data)
       } else if (payload.ok === true) {
-        response(payload.method || "", payload.id || 0, payload.result)
+        var resultJson = JSON.stringify(payload.result)
+        if (resultJson === undefined)
+          failure(payload.method || "", payload.id || 0,
+                  "BlueFerry returned an empty response")
+        else
+          response(payload.method || "", payload.id || 0, resultJson)
       } else {
         failure(payload.method || "", payload.id || 0,
                 payload.error || "BlueFerry request failed")

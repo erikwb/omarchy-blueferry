@@ -1,5 +1,6 @@
 """Run the Omarchy controls in a desktop-free Quickshell sandbox."""
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,30 +37,42 @@ Item {
   onOpenChanged: if (open && focusTarget) Qt.callLater(function() { focusTarget.forceActiveFocus() })
 }
 ''')
-    for name in ("Panel.qml", "ReplyController.qml", "QuickReply.qml"):
+    for name in ("Panel.qml", "BackendBridge.qml", "ReplyController.qml", "QuickReply.qml"):
         shutil.copyfile(ROOT / name, tmp_path / name)
     (tmp_path / "blueferry-cli").write_text('#!/bin/sh\nprintf \'{"configured":true}\\n\'\n')
     (tmp_path / "blueferry-cli").chmod(0o755)
-    (tmp_path / "BackendBridge.qml").write_text('''import QtQuick
-Item {
-  id: root
-  property bool active: true
-  property int nextId: 1
-  signal response(string method, int requestId, var result)
-  signal failure(string method, int requestId, string message)
-  signal eventReceived(string name, var data)
-  function request(method, args) {
-    var id = nextId++
-    Qt.callLater(function() {
-      if (method === "status") root.response(method, id, {daemon:true, map:true, pbap:true})
-      else if (method === "threads") root.response(method, id,
-        [{key:"alice", name:"Alice", reply_ready:true, is_group:false, unread:true, messages:[]}])
-      else if (method === "send_to_thread") root.response(method, id, "fake-transfer")
-    })
-    return id
-  }
-}
+    (tmp_path / "client-helper").write_text('''#!/usr/bin/python
+import json
+import sys
+from pathlib import Path
+Path("/artifacts/client-args.json").write_text(json.dumps(sys.argv[1:]))
 ''')
+    (tmp_path / "client-helper").chmod(0o755)
+    (tmp_path / "bridge-helper").write_text('''#!/usr/bin/python
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request["method"]
+    if method == "status":
+        result = {"daemon": True, "map": True, "pbap": True,
+                  "connectivity_detail": "Messages and contacts are connected"}
+    elif method == "threads":
+        result = [{"key": "alice", "name": "Alice", "reply_ready": True,
+                   "is_group": False, "unread": True, "starred": True,
+                   "messages": [{"body": "Ready when you are", "outgoing": False}]},
+                  {"key": "bob", "name": "Bob", "unread": False, "messages": []}]
+    elif method == "send_to_thread":
+        assert request["args"] == {"thread_key": "alice", "body": "h",
+                                   "confirm_group": False, "expected_group_token": ""}
+        result = "fake-transfer"
+    else:
+        raise AssertionError("unexpected method: " + method)
+    print(json.dumps({"method": method, "id": request["id"],
+                      "ok": True, "result": result}), flush=True)
+''')
+    (tmp_path / "bridge-helper").chmod(0o755)
     (tmp_path / "shell.qml").write_text('''import QtQuick
 import QtQuick.Window
 import QtTest
@@ -167,6 +180,12 @@ ShellRoot {
         }
         function test_panel_dispatches_reply_and_handles_success() {
           tryCompare(widget, "connected", true)
+          compare(widget.statusMessage, "Messages and contacts are connected")
+          compare(widget.statusMessageIsError, false)
+          tryCompare(widget, "configured", true)
+          tryCompare(widget, "threadsRequestId", 0)
+          compare(widget.recentThreads.length, 1)
+          verify(widget.threadIsStarred(widget.recentThreads[0]))
           reply.visible = false
           widget.open()
           wait(100)
@@ -188,6 +207,12 @@ ShellRoot {
           compare(field.text, "See you soon!")
           wait(100)
           grabImage(window.contentItem).save("/artifacts/widget.png")
+          var openButton = findChild(inlineReply, "openThreadButton")
+          mouseClick(openButton, openButton.width / 2, openButton.height / 2)
+          compare(widget.opened, false)
+          widget.open()
+          tryCompare(field, "activeFocus", true)
+          compare(field.text, "See you soon!")
           keyClick(Qt.Key_Escape)
           compare(inlineReply.controller.threadKey, "")
           widget.close()
@@ -218,6 +243,8 @@ ShellRoot {
         "--ro-bind", str(tmp_path), "/config",
         "--bind", str(tmp_path / "artifacts"), "/artifacts",
         "--ro-bind", str(tmp_path / "blueferry-cli"), "/usr/bin/blueferry",
+        "--ro-bind", str(tmp_path / "client-helper"), "/usr/bin/blueferry-quickshell",
+        "--ro-bind", str(tmp_path / "bridge-helper"), "/usr/bin/blueferry-quickshell-bridge",
         "--setenv", "HOME", "/home/test",
         "--setenv", "XDG_RUNTIME_DIR", "/run",
         "--setenv", "XDG_CONFIG_HOME", "/home/test/.config",
@@ -239,3 +266,6 @@ ShellRoot {
     assert "FAIL!" not in output, output
     assert "ReferenceError" not in output, output
     assert "TypeError" not in output, output
+    assert json.loads((tmp_path / "artifacts/client-args.json").read_text()) == [
+        "--thread", "alice",
+    ]

@@ -51,6 +51,7 @@ ColumnLayout {
 
     PanelActionButton {
       id: openButton
+      objectName: "openThreadButton"
       iconText: "↗"
       tooltipText: "Open conversation in BlueFerry"
       Accessible.name: tooltipText
