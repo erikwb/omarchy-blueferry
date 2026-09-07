@@ -21,6 +21,7 @@ Panel {
   property string statusMessage: ""
   property bool statusMessageIsError: false
   property bool cursorActive: false
+  property bool cursorFromMouse: false
   property int rowIndex: 0
   property int statusRequestId: 0
   property int threadsRequestId: 0
@@ -348,6 +349,7 @@ Panel {
       blocked: root.activeReplyRow !== null && root.activeReplyRow.activeFocus
       onMoveRequested: function(_dx, dy) {
         root.cursorActive = true
+        root.cursorFromMouse = false
         root.rowIndex = Math.max(0, Math.min(root.recentThreads.length, root.rowIndex + dy))
       }
       onActivateRequested: {
@@ -460,7 +462,13 @@ Panel {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onEntered: { root.cursorActive = true; root.rowIndex = root.recentThreads.length }
+              onEntered: {
+                root.cursorActive = true
+                root.cursorFromMouse = true
+                root.rowIndex = root.recentThreads.length
+              }
+              onExited: if (root.cursorFromMouse && root.rowIndex === root.recentThreads.length)
+                root.cursorActive = false
               onClicked: root.openClient()
             }
           }
@@ -504,7 +512,13 @@ Panel {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onEntered: { root.cursorActive = true; root.rowIndex = row.cursorIndex }
+          onEntered: {
+            root.cursorActive = true
+            root.cursorFromMouse = true
+            root.rowIndex = row.cursorIndex
+          }
+          onExited: if (root.cursorFromMouse && root.rowIndex === row.cursorIndex)
+            root.cursorActive = false
           onClicked: row.focusEditor()
         }
 
