@@ -62,7 +62,9 @@ for line in sys.stdin:
         result = [{"key": "alice", "name": "Alice", "reply_ready": True,
                    "is_group": False, "unread": True, "starred": True,
                    "messages": [{"body": "Ready when you are", "outgoing": False}]},
-                  {"key": "bob", "name": "Bob", "unread": False, "messages": []}]
+                  {"key": "bob", "name": "Bob", "unread": True, "reply_ready": True,
+                   "is_group": False, "messages": [{"body": "Coffee later?", "outgoing": False}]},
+                  {"key": "charlie", "name": "Charlie", "unread": False, "messages": []}]
     elif method == "send_to_thread":
         assert request["args"] == {"thread_key": "alice", "body": "h",
                                    "confirm_group": False, "expected_group_token": ""}
@@ -101,7 +103,7 @@ ShellRoot {
   }
   Window {
     id: window
-    width: 360; height: 280; visible: true; color: "#101315"
+    width: 360; height: 600; visible: true; color: "#101315"
     Plugin.Panel { id: widget }
     PanelKeyCatcher {
       anchors.fill: parent
@@ -113,7 +115,7 @@ ShellRoot {
         width: parent.width - 24
         x: 12; y: 12
         controller: controller
-        onBackRequested: { root.backCount++; controller.back() }
+        onLeaveRequested: { root.backCount++; controller.back() }
       }
       TestCase {
         name: "QuickReply"
@@ -122,11 +124,16 @@ ShellRoot {
           console.log("WIDGET_TEST_RESULTS", qtest_results.passCount, qtest_results.failCount)
         function init() {
           root.calls = []; root.panelActivations = 0; root.panelMoves = 0
+          widget.close()
+          reply.visible = true
           controller.sendRequestId = 0; controller.drafts = {}
           controller.selectThread(root.alice)
           window.requestActivate()
           reply.focusEditor()
           wait(100)
+        }
+        function cleanup() {
+          if (qtest_results.failed) console.warn("WIDGET_FAILED", qtest_results.functionName)
         }
         function test_enter_sends_typed_text_without_panel_shortcuts() {
           keyClick(Qt.Key_J); keyClick(Qt.Key_K); keyClick(Qt.Key_L)
@@ -184,16 +191,18 @@ ShellRoot {
           compare(widget.statusMessageIsError, false)
           tryCompare(widget, "configured", true)
           tryCompare(widget, "threadsRequestId", 0)
-          compare(widget.recentThreads.length, 1)
+          compare(widget.recentThreads.length, 2)
           verify(widget.threadIsStarred(widget.recentThreads[0]))
           reply.visible = false
           widget.open()
           wait(100)
-          keyClick(Qt.Key_Return)
-          var inlineReply = findChild(widget, "quickReply")
+          var row = findChild(widget, "threadRow:alice")
+          var inlineReply = findChild(row, "quickReply")
           verify(inlineReply !== null)
           compare(inlineReply.controller.threadKey, "alice")
           var field = findChild(inlineReply, "replyField")
+          verify(field.visible)
+          mouseClick(field, field.width / 2, field.height / 2)
           tryCompare(field, "activeFocus", true)
           keyClick(Qt.Key_H)
           compare(inlineReply.controller.text, "h")
@@ -207,14 +216,72 @@ ShellRoot {
           compare(field.text, "See you soon!")
           wait(100)
           grabImage(window.contentItem).save("/artifacts/widget.png")
-          var openButton = findChild(inlineReply, "openThreadButton")
+          var openButton = findChild(row, "openThreadButton")
           mouseClick(openButton, openButton.width / 2, openButton.height / 2)
           compare(widget.opened, false)
           widget.open()
           tryCompare(field, "activeFocus", true)
           compare(field.text, "See you soon!")
           keyClick(Qt.Key_Escape)
-          compare(inlineReply.controller.threadKey, "")
+          verify(!field.activeFocus)
+          compare(field.text, "See you soon!")
+          keyClick(Qt.Key_Escape)
+          compare(widget.opened, false)
+          widget.close()
+          reply.visible = true
+        }
+        function test_panel_refresh_keeps_editors_drafts_and_focus() {
+          reply.visible = false
+          widget.open()
+          wait(100)
+          tryCompare(widget, "threadsRequestId", 0)
+          var alice = widget.threads[0]
+          var bob = widget.threads[1]
+          var aliceRow = findChild(widget, "threadRow:alice")
+          var aliceReply = findChild(aliceRow, "quickReply")
+          var aliceField = findChild(aliceRow, "replyField")
+          var bobReply = findChild(findChild(widget, "threadRow:bob"), "quickReply")
+          var bobField = findChild(bobReply, "replyField")
+          verify(aliceReply.controller !== bobReply.controller)
+          aliceReply.controller.edit("Alice draft")
+          bobReply.controller.edit("Bob draft")
+          mouseClick(aliceField, aliceField.width / 2, aliceField.height / 2)
+          aliceField.cursorPosition = 3
+          widget.threads = [Object.assign({}, bob), Object.assign({}, alice)]
+          wait(20)
+          compare(findChild(widget, "threadRow:alice"), aliceRow)
+          compare(findChild(aliceRow, "replyField"), aliceField)
+          verify(aliceField.activeFocus)
+          compare(widget.rowIndex, 1)
+          compare(aliceField.cursorPosition, 3)
+          compare(aliceField.text, "Alice draft")
+          compare(bobField.text, "Bob draft")
+          var savedController = aliceReply.controller
+          widget.threads = [bob]
+          wait(20)
+          verify(findChild(widget, "threadRow:alice") === null)
+          compare(widget.activeReplyRow, null)
+          widget.threads = [bob, alice]
+          wait(20)
+          var restored = findChild(findChild(widget, "threadRow:alice"), "quickReply")
+          compare(restored.controller, savedController)
+          compare(findChild(restored, "replyField").text, "Alice draft")
+          widget.close()
+          reply.visible = true
+        }
+        function test_panel_send_finishes_after_its_row_disappears() {
+          reply.visible = false
+          widget.open()
+          wait(100)
+          tryCompare(widget, "threadsRequestId", 0)
+          var row = findChild(widget, "threadRow:alice")
+          var savedController = findChild(row, "quickReply").controller
+          savedController.edit("h")
+          verify(savedController.send())
+          widget.threads = []
+          tryCompare(savedController, "notice", "Sent")
+          compare(savedController.text, "")
+          compare(savedController.sendRequestId, 0)
           widget.close()
           reply.visible = true
         }
@@ -262,7 +329,7 @@ ShellRoot {
     result = subprocess.run(command, text=True, capture_output=True, timeout=30, check=False)
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert "WIDGET_TEST_RESULTS 8 0" in output, output
+    assert "WIDGET_TEST_RESULTS 10 0" in output, output
     assert "FAIL!" not in output, output
     assert "ReferenceError" not in output, output
     assert "TypeError" not in output, output

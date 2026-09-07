@@ -6,10 +6,11 @@ receive iMessages over Bluetooth while paired to your iPhone with no special
 software running on your phone, no proxies, and no cloud tricks. 
 
 This widget shows connection health and unread conversations in the bar popup.
-Click a conversation to write a quick reply, then press Enter or click Send.
-Press Escape or the back arrow to return to the list; drafts stay available
-until sent or the shell restarts. The ↗ button opens the conversation in the
-full client, which also handles pairing and preferences.
+Write directly in the reply field beneath each unread conversation, then
+press Enter or click Send. Press Escape to leave the field; drafts stay
+available until sent or the shell restarts. The ↗ button beside each
+conversation opens it in the full client, which also handles pairing and
+preferences.
 
 Group replies use the members saved in BlueFerry. If a group's members need
 review, open it in the full client before replying. Failed sends keep your

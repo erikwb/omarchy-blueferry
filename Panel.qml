@@ -24,6 +24,8 @@ Panel {
   property int rowIndex: 0
   property int statusRequestId: 0
   property int threadsRequestId: 0
+  property var replyControllers: ({})
+  property Item activeReplyRow: null
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -40,6 +42,45 @@ Panel {
       if (unread.length >= 5) break
     }
     return unread
+  }
+
+  // Refresh row data without replacing the editors or their keyboard focus.
+  onRecentThreadsChanged: syncUnreadRows()
+  Component.onCompleted: syncUnreadRows()
+
+  function syncUnreadRows() {
+    if (!recentThreads || !unreadModel) return
+    if (activeReplyRow && !recentThreads.some(thread => thread.key === activeReplyRow.thread.key))
+      closeReply()
+    for (var index = 0; index < recentThreads.length; ++index) {
+      var thread = recentThreads[index]
+      var existing = index
+      while (existing < unreadModel.count && unreadModel.get(existing).threadKey !== thread.key)
+        existing++
+      if (existing === unreadModel.count)
+        unreadModel.insert(index, {threadKey: thread.key, thread: thread})
+      else {
+        if (existing !== index) unreadModel.move(existing, index, 1)
+        unreadModel.setProperty(index, "thread", thread)
+      }
+    }
+    if (unreadModel.count > recentThreads.length)
+      unreadModel.remove(recentThreads.length, unreadModel.count - recentThreads.length)
+    for (var key in replyControllers) {
+      var controller = replyControllers[key]
+      if (!controller.sending && controller.text === "" && controller.thread)
+        controller.selectThread(controller.thread)
+    }
+  }
+
+  function controllerFor(thread) {
+    var key = "$" + thread.key
+    if (!replyControllers[key]) {
+      var controller = replyControllerComponent.createObject(root)
+      controller.selectThread(thread)
+      replyControllers[key] = controller
+    }
+    return replyControllers[key]
   }
 
   function requestStatus() {
@@ -73,13 +114,25 @@ Panel {
   }
 
   function openReply(thread) {
-    replyController.selectThread(thread)
-    Qt.callLater(function() { quickReply.focusEditor() })
+    for (var index = 0; index < unreadRows.count; ++index) {
+      var row = unreadRows.itemAt(index)
+      if (row.thread.key === thread.key) {
+        row.focusEditor()
+        return
+      }
+    }
   }
 
   function closeReply() {
-    replyController.back()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    activeReplyRow = null
+    keyCatcher.forceActiveFocus()
+  }
+
+  function showReplyRow(row) {
+    var top = row.mapToItem(column, 0, 0).y
+    var bottom = top + row.height
+    var offset = Math.min(top, Math.max(viewport.contentY, bottom - viewport.height))
+    viewport.contentY = Math.max(0, Math.min(offset, viewport.contentHeight - viewport.height))
   }
 
   function showInstallInstructions() {
@@ -130,7 +183,7 @@ Panel {
     rowIndex = 0
     refresh()
     Qt.callLater(function() {
-      if (replyController.threadKey !== "") quickReply.focusEditor()
+      if (activeReplyRow) activeReplyRow.focusEditor()
       else keyCatcher.forceActiveFocus()
     })
   }
@@ -167,20 +220,30 @@ Panel {
     active: root.componentsInstalled
   }
 
-  ReplyController {
-    id: replyController
-    bridge: backendBridge
-    threads: root.threads
-    connected: root.connected
+  ListModel { id: unreadModel; dynamicRoles: true }
+
+  // Controllers outlive unread-row delegates, retaining drafts and sends
+  // even when another client marks a thread read or a refresh removes it.
+  Component {
+    id: replyControllerComponent
+    ReplyController {
+      bridge: backendBridge
+      threads: root.threads
+      connected: root.connected
+    }
   }
 
   Connections {
     target: backendBridge
 
     function onResponse(method, requestId, resultJson) {
-      if (replyController.handleResponse(method, requestId)) {
-        root.requestThreads()
-        return
+      if (method === "send_to_thread") {
+        for (var key in root.replyControllers) {
+          if (root.replyControllers[key].handleResponse(method, requestId)) {
+            root.requestThreads()
+            return
+          }
+        }
       }
       if (method === "status" && requestId === root.statusRequestId) {
         root.statusRequestId = 0
@@ -215,7 +278,8 @@ Panel {
     }
 
     function onFailure(method, requestId, message) {
-      replyController.handleFailure(method, requestId, message)
+      for (var key in root.replyControllers)
+        root.replyControllers[key].handleFailure(method, requestId, message)
       if (method === "status" || method === "") {
         if (method === "" || requestId === root.statusRequestId)
           root.statusRequestId = 0
@@ -274,14 +338,14 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: replyController.threadKey !== "" ? quickReply : keyCatcher
+    focusTarget: root.activeReplyRow ? root.activeReplyRow.focusTarget : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(500))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: replyController.threadKey !== ""
+      blocked: root.activeReplyRow !== null && root.activeReplyRow.activeFocus
       onMoveRequested: function(_dx, dy) {
         root.cursorActive = true
         root.rowIndex = Math.max(0, Math.min(root.recentThreads.length, root.rowIndex + dy))
@@ -296,6 +360,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Flickable {
+        id: viewport
         anchors.fill: parent
         contentWidth: width
         contentHeight: column.implicitHeight
@@ -336,7 +401,7 @@ Panel {
           }
 
           Column {
-            visible: root.configured && replyController.threadKey === ""
+            visible: root.configured
             width: parent.width
             spacing: Style.spacing.labelGap
             InfoPair { label: "Messages"; value: root.backendStatus.map ? "Connected" : "Unavailable" }
@@ -350,7 +415,7 @@ Panel {
           }
 
           Column {
-            visible: root.recentThreads.length > 0 && replyController.threadKey === ""
+            visible: root.recentThreads.length > 0
             width: parent.width
             spacing: Style.space(8)
 
@@ -361,34 +426,18 @@ Panel {
             }
 
             Repeater {
-              model: root.recentThreads
+              id: unreadRows
+              model: unreadModel
               RecentRow {
-                required property var modelData
                 required property int index
                 width: parent.width
-                thread: modelData
                 cursorIndex: index
               }
             }
           }
 
-          QuickReply {
-            id: quickReply
-            objectName: "quickReply"
-            visible: replyController.threadKey !== ""
-            width: parent.width
-            controller: replyController
-            foreground: root.foreground
-            urgent: root.urgent
-            fontFamily: root.fontFamily
-            onBackRequested: root.closeReply()
-            onOpenRequested: thread => root.openClient(thread)
-            onActiveFocusChanged: if (activeFocus) focusEditor()
-          }
-
           CursorSurface {
             id: openRow
-            visible: replyController.threadKey === ""
             width: parent.width
             implicitHeight: openText.implicitHeight + Style.spacing.rowPaddingX
             hasCursor: root.cursorActive && root.rowIndex === root.recentThreads.length
@@ -420,76 +469,131 @@ Panel {
     }
   }
 
-  component RecentRow: CursorSurface {
+  component RecentRow: FocusScope {
     id: row
-    property var thread: null
+    required property var thread
     property int cursorIndex: 0
-    hasCursor: root.cursorActive && root.rowIndex === cursorIndex
-    foreground: root.foreground
-    implicitHeight: content.implicitHeight + Style.spacing.rowPaddingX
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onEntered: { root.cursorActive = true; root.rowIndex = row.cursorIndex }
-      onClicked: root.openReply(row.thread)
+    readonly property Item focusTarget: inlineReply.focusTarget
+    objectName: "threadRow:" + thread.key
+    implicitHeight: content.implicitHeight
+    onCursorIndexChanged: if (activeFocus) root.rowIndex = cursorIndex
+    Keys.onEscapePressed: root.closeReply()
+    onActiveFocusChanged: if (activeFocus) {
+      root.activeReplyRow = row
+      root.rowIndex = cursorIndex
+      Qt.callLater(function() { root.showReplyRow(row) })
     }
 
-    RowLayout {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(10)
-      anchors.rightMargin: Style.space(10)
-      spacing: Style.space(8)
+    function focusEditor() {
+      inlineReply.focusEditor()
+      root.showReplyRow(row)
+    }
 
-      Text {
-        text: row.thread && row.thread.is_group ? "󰡉" : "󰏲"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.icon
+    Column {
+      id: content
+      width: parent.width
+      spacing: Style.space(6)
+
+      CursorSurface {
+        width: parent.width
+        implicitHeight: heading.implicitHeight + Style.spacing.rowPaddingX
+        hasCursor: root.cursorActive && root.rowIndex === row.cursorIndex
+        foreground: root.foreground
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: { root.cursorActive = true; root.rowIndex = row.cursorIndex }
+          onClicked: row.focusEditor()
+        }
+
+        RowLayout {
+          id: heading
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.leftMargin: Style.space(10)
+          anchors.rightMargin: Style.space(10)
+          spacing: Style.space(8)
+
+          Text {
+            text: row.thread.is_group ? "󰡉" : "󰏲"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.icon
+          }
+
+          ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Style.space(1)
+            Text {
+              Layout.fillWidth: true
+              text: row.thread.name || ""
+              textFormat: Text.PlainText
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              elide: Text.ElideRight
+            }
+            Text {
+              Layout.fillWidth: true
+              text: root.preview(row.thread)
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+            Text {
+              Layout.fillWidth: true
+              visible: text !== ""
+              text: root.previewTimestamp(row.thread)
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+          }
+
+          Text {
+            visible: root.threadIsStarred(row.thread)
+            text: "★"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            Accessible.name: "Starred"
+          }
+
+          PanelActionButton {
+            id: openThread
+            objectName: "openThreadButton"
+            iconText: "↗"
+            tooltipText: "Open conversation in BlueFerry"
+            Accessible.name: tooltipText
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            focusable: true
+            onClicked: root.openClient(row.thread)
+            KeyNavigation.tab: inlineReply.focusTarget
+            KeyNavigation.backtab: inlineReply.focusTarget
+          }
+        }
       }
 
-      ColumnLayout {
-        id: content
-        Layout.fillWidth: true
-        spacing: Style.space(1)
-        Text {
-          Layout.fillWidth: true
-          text: row.thread ? row.thread.name : ""
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-          elide: Text.ElideRight
-        }
-        Text {
-          Layout.fillWidth: true
-          text: root.preview(row.thread)
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-        Text {
-          Layout.fillWidth: true
-          visible: text !== ""
-          text: root.previewTimestamp(row.thread)
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-      }
-
-      Text {
-        visible: root.threadIsStarred(row.thread)
-        text: "★"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        Accessible.name: "Starred"
+      QuickReply {
+        id: inlineReply
+        objectName: "quickReply"
+        x: Style.space(10)
+        width: parent.width - Style.space(20)
+        controller: root.controllerFor(row.thread)
+        foreground: root.foreground
+        urgent: root.urgent
+        fontFamily: root.fontFamily
+        openButton: openThread
+        onLeaveRequested: root.closeReply()
       }
     }
   }
