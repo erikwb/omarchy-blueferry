@@ -70,6 +70,16 @@ Panel {
     root.close()
   }
 
+  function openReply(thread) {
+    replyController.selectThread(thread)
+    Qt.callLater(function() { quickReply.focusEditor() })
+  }
+
+  function closeReply() {
+    replyController.back()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
   function showInstallInstructions() {
     var command = "cd \"$HOME\"; printf '%s\\n' '' "
       + "'BlueFerry is not installed yet.' '' "
@@ -117,7 +127,10 @@ Panel {
     cursorActive = false
     rowIndex = 0
     refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() {
+      if (replyController.threadKey !== "") quickReply.focusEditor()
+      else keyCatcher.forceActiveFocus()
+    })
   }
 
   Process {
@@ -152,10 +165,21 @@ Panel {
     active: root.componentsInstalled
   }
 
+  ReplyController {
+    id: replyController
+    bridge: backendBridge
+    threads: root.threads
+    connected: root.connected
+  }
+
   Connections {
     target: backendBridge
 
     function onResponse(method, requestId, result) {
+      if (replyController.handleResponse(method, requestId)) {
+        root.requestThreads()
+        return
+      }
       if (method === "status" && requestId === root.statusRequestId) {
         root.statusRequestId = 0
         if (typeof result !== "object" || result === null) {
@@ -174,6 +198,7 @@ Panel {
     }
 
     function onFailure(method, requestId, message) {
+      replyController.handleFailure(method, requestId, message)
       if (method === "status" || method === "") {
         if (method === "" || requestId === root.statusRequestId)
           root.statusRequestId = 0
@@ -229,20 +254,21 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    focusTarget: replyController.threadKey !== "" ? quickReply : keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(500))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: replyController.threadKey !== ""
       onMoveRequested: function(_dx, dy) {
         root.cursorActive = true
         root.rowIndex = Math.max(0, Math.min(root.recentThreads.length, root.rowIndex + dy))
       }
       onActivateRequested: {
         if (root.rowIndex < root.recentThreads.length)
-          root.openClient(root.recentThreads[root.rowIndex])
+          root.openReply(root.recentThreads[root.rowIndex])
         else
           root.openClient()
       }
@@ -290,7 +316,7 @@ Panel {
           }
 
           Column {
-            visible: root.configured
+            visible: root.configured && replyController.threadKey === ""
             width: parent.width
             spacing: Style.spacing.labelGap
             InfoPair { label: "Messages"; value: root.backendStatus.map ? "Connected" : "Unavailable" }
@@ -304,7 +330,7 @@ Panel {
           }
 
           Column {
-            visible: root.recentThreads.length > 0
+            visible: root.recentThreads.length > 0 && replyController.threadKey === ""
             width: parent.width
             spacing: Style.space(8)
 
@@ -326,8 +352,23 @@ Panel {
             }
           }
 
+          QuickReply {
+            id: quickReply
+            objectName: "quickReply"
+            visible: replyController.threadKey !== ""
+            width: parent.width
+            controller: replyController
+            foreground: root.foreground
+            urgent: root.urgent
+            fontFamily: root.fontFamily
+            onBackRequested: root.closeReply()
+            onOpenRequested: thread => root.openClient(thread)
+            onActiveFocusChanged: if (activeFocus) focusEditor()
+          }
+
           CursorSurface {
             id: openRow
+            visible: replyController.threadKey === ""
             width: parent.width
             implicitHeight: openText.implicitHeight + Style.spacing.rowPaddingX
             hasCursor: root.cursorActive && root.rowIndex === root.recentThreads.length
@@ -372,7 +413,7 @@ Panel {
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onEntered: { root.cursorActive = true; root.rowIndex = row.cursorIndex }
-      onClicked: root.openClient(row.thread)
+      onClicked: root.openReply(row.thread)
     }
 
     RowLayout {
