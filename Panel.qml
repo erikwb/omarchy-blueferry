@@ -503,6 +503,7 @@ Panel {
       spacing: Style.space(6)
 
       CursorSurface {
+        objectName: "threadHeader"
         width: parent.width
         implicitHeight: heading.implicitHeight + Style.spacing.rowPaddingX
         hasCursor: root.cursorActive && root.rowIndex === row.cursorIndex
@@ -519,7 +520,7 @@ Panel {
           }
           onExited: if (root.cursorFromMouse && root.rowIndex === row.cursorIndex)
             root.cursorActive = false
-          onClicked: row.focusEditor()
+          onClicked: root.openClient(row.thread)
         }
 
         RowLayout {
@@ -580,20 +581,6 @@ Panel {
             font.pixelSize: Style.font.body
             Accessible.name: "Starred"
           }
-
-          PanelActionButton {
-            id: openThread
-            objectName: "openThreadButton"
-            iconText: "↗"
-            tooltipText: "Open conversation in BlueFerry"
-            Accessible.name: tooltipText
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            focusable: true
-            onClicked: root.openClient(row.thread)
-            KeyNavigation.tab: inlineReply.focusTarget
-            KeyNavigation.backtab: inlineReply.focusTarget
-          }
         }
       }
 
@@ -606,7 +593,6 @@ Panel {
         foreground: root.foreground
         urgent: root.urgent
         fontFamily: root.fontFamily
-        openButton: openThread
         onLeaveRequested: root.closeReply()
       }
     }

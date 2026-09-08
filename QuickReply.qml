@@ -12,7 +12,6 @@ ColumnLayout {
   property color urgent: Color.urgent
   property string fontFamily: Style.font.family
   readonly property Item focusTarget: replyField
-  property Item openButton: null
 
   signal leaveRequested()
 
@@ -51,8 +50,8 @@ ColumnLayout {
       onTextEdited: root.controller.edit(text)
       onAccepted: root.controller.send()
       Keys.onEscapePressed: root.leaveRequested()
-      KeyNavigation.tab: sendButton.enabled ? sendButton : root.openButton
-      KeyNavigation.backtab: root.openButton
+      KeyNavigation.tab: sendButton
+      KeyNavigation.backtab: sendButton
     }
 
     Button {
@@ -66,7 +65,7 @@ ColumnLayout {
       enabled: root.controller.canSend
       opacity: enabled ? 1 : 0.5
       onClicked: root.controller.send()
-      KeyNavigation.tab: root.openButton
+      KeyNavigation.tab: replyField
       KeyNavigation.backtab: replyField
     }
   }
